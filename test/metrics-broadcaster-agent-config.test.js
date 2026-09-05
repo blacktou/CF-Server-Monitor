@@ -57,8 +57,10 @@ function makeSettingsDb(settingsSource) {
   };
 }
 
-function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion = 5) {
-  const serialized = schemaVersion >= 5
+function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion = 6) {
+  const serialized = schemaVersion >= 6
+    ? `collect_interval=2&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2&ping_mode=tcp`
+    : schemaVersion >= 5
     ? `collect_interval=2&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto&wss_report_interval=2`
     : schemaVersion >= 4
       ? `collect_interval=0&report_interval=60&reset_day=1&schema_version=${schemaVersion}&custom_ct=&custom_cu=&custom_cm=&custom_bd=&interface=&connection_mode=auto`
@@ -79,6 +81,9 @@ function makeDescriptor(md5 = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', schemaVersion 
   }
   if (schemaVersion >= 5) {
     config.wss_report_interval = 2;
+  }
+  if (schemaVersion >= 6) {
+    config.ping_mode = 'tcp';
   }
   return {
     serialized,
@@ -129,6 +134,28 @@ test('private frontend WebSocket rejects unauthenticated clients', async () => {
   );
 
   assert.equal(response.status, 401);
+  assert.equal(forwarded, false);
+});
+
+test('Agent WSS upgrade rejects disabled state with fast-switch envelope', async () => {
+  clearSiteSettingsCache();
+  let forwarded = false;
+  const response = await handleUpdateWebSocketUpgrade(
+    makeWebSocketUpgradeRequest('https://example.com/update'),
+    makeWebSocketEnv({
+      wss_report_enabled: 'false'
+    }, () => {
+      forwarded = true;
+    })
+  );
+
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get('X-Agent-Wss-Mode'), 'disabled');
+  assert.equal(response.headers.get('X-Agent-Wss-Reason'), 'wss_disabled');
+  const body = await response.json();
+  assert.equal(body.code, 409);
+  assert.equal(body.text, 'wss_disabled');
+  assert.equal(body.connection_mode, 'http');
   assert.equal(forwarded, false);
 });
 
@@ -225,6 +252,29 @@ test('Durable Object rechecks Agent WSS schedule before accepting a socket', asy
   assert.equal(response.headers.get('X-Agent-Wss-Reason'), 'wss_schedule_inactive');
   const body = await response.json();
   assert.equal(body.text, 'wss_schedule_inactive');
+  assert.equal(body.connection_mode, 'http');
+  assert.equal(broadcaster.standardAgentWebSocketCount, 0);
+});
+
+test('Durable Object rejects Agent WSS upgrade when report is disabled', async () => {
+  clearSiteSettingsCache();
+  const broadcaster = makeBroadcaster([], {
+    DB: makeSettingsDb({
+      wss_report_enabled: 'false'
+    })
+  });
+
+  const response = await broadcaster._handleAgentReportWebSocket(
+    makeWebSocketUpgradeRequest('http://internal/update'),
+    new URL('http://internal/update')
+  );
+
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get('X-Agent-Wss-Mode'), 'disabled');
+  assert.equal(response.headers.get('X-Agent-Wss-Reason'), 'wss_disabled');
+  const body = await response.json();
+  assert.equal(body.code, 409);
+  assert.equal(body.text, 'wss_disabled');
   assert.equal(body.connection_mode, 'http');
   assert.equal(broadcaster.standardAgentWebSocketCount, 0);
 });
@@ -362,7 +412,7 @@ test('WSS agent context uses current report interval from payload', async () => 
     serverId: 'server-1',
     historyPartitionId: 42,
     reportIntervalMs: 60000,
-    configSchema: '5',
+    configSchema: '6',
     configMd5: 'none'
   }, {
     id: 'server-1',
@@ -389,7 +439,7 @@ test('WSS agent config ack is skipped when report omits config state', async () 
       configMd5: 'none'
     },
     serverId: 'server-1',
-    agentConfig: { schema: '5', md5: 'none', requested: false }
+    agentConfig: { schema: '6', md5: 'none', requested: false }
   });
 
   assert.equal(loads, 0);
@@ -407,7 +457,7 @@ test('WSS agent config ack is built when report includes config state', async ()
   const ack = await broadcaster._buildAgentConfigAck({
     attachment: {},
     serverId: 'server-1',
-    agentConfig: { schema: '5', md5: 'none', requested: true }
+    agentConfig: { schema: '6', md5: 'none', requested: true }
   });
 
   assert.equal(loads, 1);
@@ -417,6 +467,7 @@ test('WSS agent config ack is built when report includes config state', async ()
   assert.equal(ack.config_body, makeDescriptor().serialized);
   assert.equal(ack.payload.report_interval, 60);
   assert.equal(ack.payload.connection_mode, 'auto');
+  assert.equal(ack.payload.ping_mode, 'tcp');
   assert.equal(Object.prototype.hasOwnProperty.call(ack, 'config'), false);
 });
 
@@ -448,7 +499,7 @@ test('WSS agent config push uses string body and structured payload', () => {
         kind: 'agent-report',
         authenticated: true,
         serverId: 'server-1',
-        configSchema: '5',
+        configSchema: '6',
         configMd5: 'none'
       };
     },
@@ -467,6 +518,7 @@ test('WSS agent config push uses string body and structured payload', () => {
   assert.equal(sent[0].config_body, makeDescriptor().serialized);
   assert.equal(sent[0].payload.report_interval, 60);
   assert.equal(sent[0].payload.connection_mode, 'auto');
+  assert.equal(sent[0].payload.ping_mode, 'tcp');
   assert.equal(Object.prototype.hasOwnProperty.call(sent[0], 'config'), false);
 });
 
@@ -488,6 +540,7 @@ test('WSS agent config push keeps legacy schema without connection mode', () => 
   };
   const broadcaster = makeBroadcaster([ws]);
   const descriptors = new Map([
+    [6, makeDescriptor('eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 6)],
     [5, makeDescriptor('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 5)],
     [4, makeDescriptor('dddddddddddddddddddddddddddddddd', 4)],
     [3, makeDescriptor('cccccccccccccccccccccccccccccccc', 3)]
@@ -569,10 +622,12 @@ test('agent report mode change closes existing Agent WSS when disabled', async (
   });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].type, 'error');
-  assert.equal(sent[0].code, 403);
+  assert.equal(sent[0].code, 409);
+  assert.equal(sent[0].text, 'wss_disabled');
+  assert.equal(sent[0].connection_mode, 'http');
   assert.deepEqual(closed, [{
-    code: 1008,
-    reason: 'Agent WSS report disabled'
+    code: 1013,
+    reason: 'wss_disabled'
   }]);
 });
 

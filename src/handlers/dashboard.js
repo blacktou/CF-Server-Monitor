@@ -10,8 +10,11 @@ import {
   getWorkerLatestReportUpdates
 } from '../utils/latestReportCache.js';
 import { markFrontendRealtimeActive } from '../utils/realtimeBroadcastGate.js';
-
-const LATEST_REPORT_ID_CHUNK_SIZE = 500;
+import {
+  DASHBOARD_LATENCY_WINDOW_HOURS,
+  DASHBOARD_LATENCY_WINDOW_POINTS,
+  DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE
+} from '../utils/config.js';
 
 function createEmptyLatencyWindow() {
   return { ping: [], loss: [] };
@@ -86,8 +89,8 @@ async function getDurableRealtimeState(env, serverIds) {
     const stub = env.METRICS_BROADCASTER.get(id);
     const updates = [];
 
-    for (let offset = 0; offset < serverIds.length; offset += LATEST_REPORT_ID_CHUNK_SIZE) {
-      const chunk = serverIds.slice(offset, offset + LATEST_REPORT_ID_CHUNK_SIZE);
+    for (let offset = 0; offset < serverIds.length; offset += DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE) {
+      const chunk = serverIds.slice(offset, offset + DASHBOARD_LATEST_REPORT_ID_CHUNK_SIZE);
       const response = await stub.fetch('http://internal/latest-report-updates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -261,7 +264,11 @@ export async function handleServersAPI(request, env, sys) {
       show_expire: sys.show_expire === 'true',
       show_tf: sys.show_tf === 'true',
       show_three_net_details: sys.show_three_net_details === 'true',
-      display_mode: sys.display_mode || 'bar'
+      display_mode: sys.display_mode || 'bar',
+      latency_window: {
+        points: DASHBOARD_LATENCY_WINDOW_POINTS,
+        hours: DASHBOARD_LATENCY_WINDOW_HOURS
+      }
     }
   };
 

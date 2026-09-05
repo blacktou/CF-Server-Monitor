@@ -349,7 +349,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../components/TerminalHeader.vue'
 import Footer from '../components/Footer.vue'
@@ -370,6 +370,7 @@ import { applyMikusThemeOptions } from '../utils/themeOptions.js'
 
 const route = useRoute()
 const router = useRouter()
+const appConfig = inject('appConfig', null)
 
 let serverId = route.params.id
 if (!serverId) {
@@ -390,6 +391,7 @@ if (indexParam !== undefined && indexParam !== null && !isNaN(parseInt(indexPara
 const server = ref({})
 const REALTIME_HISTORY_HOURS = 0.167
 const LATEST_REPORT_MAX_REPLAY_DELAY = 120000
+const REPORT_CHART_UPDATE_INTERVAL_MS = 30000
 const currentHours = ref(REALTIME_HISTORY_HOURS)
 const lastUpdateText = ref('')
 const config = ref(null)
@@ -605,6 +607,7 @@ const avgLossCm = ref(null)
 const avgLossBd = ref(null)
 let isInitializingCharts = false
 let databaseUpgradeAlertShown = false
+let lastReportChartUpdateTime = 0
 
 const isChartExpanded = (key) => !!expandedCharts.value[key]
 
@@ -1053,14 +1056,15 @@ const updateChartsTheme = () => {
 const { onThemeChange } = useTheme()
 onThemeChange(updateChartsTheme)
 
-// ≤1h: gap超过5分钟断线; >1h: 按后端采样点数计算，最低5分钟基础阈值
+// ≤1h: gap超过5分钟断线; >1h: 按 long_history_points 计算采样间隔，允许点落在桶内不同位置造成的正常漂移
 const getHistoryGapBreakMs = (hours = currentHours.value) => {
   if (hours <= 1) return 5 * 60 * 1000
   const configuredPoints = Number(config.value?.long_history_points)
   const samplePoints = HISTORY.LONG_RANGE_POINT_OPTIONS.includes(configuredPoints)
     ? configuredPoints
     : HISTORY.DEFAULT_LONG_RANGE_POINTS
-  return Math.max(5 * 60 * 1000, Math.ceil(hours * 60 * 60 * 1000 / samplePoints))
+  const expectedIntervalMs = Math.ceil(hours * 60 * 60 * 1000 / samplePoints)
+  return Math.max(5 * 60 * 1000, expectedIntervalMs * 1.9)
 }
 
 const shouldBreakGap = (prevPoint, nextPoint) => {
@@ -1070,8 +1074,7 @@ const shouldBreakGap = (prevPoint, nextPoint) => {
   if (!Number.isFinite(prevTime) || !Number.isFinite(nextTime)) return false
   const gap = nextTime - prevTime
   const breakThreshold = getHistoryGapBreakMs()
-  if (currentHours.value <= 1) return gap > breakThreshold
-  return gap > breakThreshold * 1.1
+  return gap > breakThreshold
 }
 
 const applyGapBreak = (data) => {
@@ -1120,12 +1123,6 @@ const getLastDatasetTimestamp = (data) => {
   return 0
 }
 
-const sampleData = (dataPoints) => {
-  if (!dataPoints || dataPoints.length <= CHART.MAX_DATA_POINTS) return dataPoints
-  const step = Math.ceil(dataPoints.length / CHART.MAX_DATA_POINTS)
-  return dataPoints.filter((_, i) => i % step === 0)
-}
-
 const updateChartDataset = (chart, datasetIndex, dataPoints, yAccessor) => {
   if (!chart) return
 
@@ -1134,9 +1131,7 @@ const updateChartDataset = (chart, datasetIndex, dataPoints, yAccessor) => {
 
   let processedData = []
   if (dataPoints && dataPoints.length > 0) {
-    const sampledData = sampleData(dataPoints)
-
-    processedData = sampledData.map(d => {
+    processedData = dataPoints.map(d => {
       return createChartPoint(new Date(d.timestamp).getTime(), yAccessor(d))
     })
 
@@ -1165,9 +1160,7 @@ const updateLoadChart = (chart, dataPoints) => {
 
   let processedData = []
   if (dataPoints && dataPoints.length > 0) {
-    const sampledData = sampleData(dataPoints)
-
-    processedData = sampledData.map(d => {
+    processedData = dataPoints.map(d => {
       const loadVal = d.load_avg || '0 0 0'
       const loads = parseLoadAvg(loadVal)
       return { 
@@ -1205,12 +1198,17 @@ const clearDiskIoChart = () => {
 const loadAllHistory = async (hours) => {
   try {
     const allData = await fetchAllHistory(serverId, hours, apiIndex.value)
+    lastReportChartUpdateTime = 0
     lossHistoryFields.value = Object.fromEntries(PING_FIELD_DEFS.map(item => [
       item.lossField,
       allData.some(row => isLossValid(row[item.lossField]))
     ]))
 
     if (allData.length > 0) {
+      lastReportChartUpdateTime = allData.reduce((latest, row) => {
+        const rowTime = new Date(row.timestamp).getTime()
+        return Number.isFinite(rowTime) ? Math.max(latest, rowTime) : latest
+      }, 0)
       updateChartDataset(charts.cpu, 0, allData, fieldAccessor('cpu', true))
       rebuildGpuChartDatasets()
       for (let i = 0; i < charts.gpu.data.datasets.length; i++) {
@@ -1500,7 +1498,6 @@ const appendRealtimeSampleCharts = (data, dataTimestamp) => {
   appendDataToChart(charts.ram, 1, dataTimestamp, swapPercent)
   appendDataToChart(charts.net, 0, dataTimestamp, data.net_in_speed)
   appendDataToChart(charts.net, 1, dataTimestamp, data.net_out_speed)
-  appendDiskIoChart(data, dataTimestamp)
 }
 
 const appendDiskIoChart = (data, dataTimestamp) => {
@@ -1540,6 +1537,15 @@ const appendReportCharts = (data, dataTimestamp) => {
   appendDataToChart(charts.loss, 2, dataTimestamp, data.loss_cm, false, true)
   appendDataToChart(charts.loss, 3, dataTimestamp, data.loss_bd, false, true)
   appendLoadChartData(dataTimestamp, data.load_avg)
+}
+
+const appendReportChartsThrottled = (data, dataTimestamp) => {
+  if (!Number.isFinite(dataTimestamp)) return
+  if (lastReportChartUpdateTime && dataTimestamp - lastReportChartUpdateTime < REPORT_CHART_UPDATE_INTERVAL_MS) {
+    return
+  }
+  appendReportCharts(data, dataTimestamp)
+  lastReportChartUpdateTime = dataTimestamp
 }
 
 const shouldMergeIncomingField = (key, mergeMode) => {
@@ -1586,7 +1592,7 @@ const fetchCurrentStatus = async (incomingData, options = {}) => {
     if (data.last_updated && chartsReady.value && isRealtimeHistoryRange()) {
       const dataTimestamp = new Date(data.last_updated).getTime()
       if (chartMode === 'sample' || chartMode === 'all') appendRealtimeSampleCharts(data, dataTimestamp)
-      if (chartMode === 'report' || chartMode === 'all') appendReportCharts(data, dataTimestamp)
+      if (chartMode === 'report' || chartMode === 'all') appendReportChartsThrottled(data, dataTimestamp)
     }
 
     if (data.last_updated) {
@@ -1679,9 +1685,17 @@ const handleLiveMessage = (msg) => {
   }
 }
 
+const getInjectedRuntimeConfig = () => {
+  if (!appConfig) return null
+  if (Array.isArray(appConfig.site_configs) && appConfig.site_configs[apiIndex.value]) {
+    return appConfig.site_configs[apiIndex.value]
+  }
+  return apiIndex.value === 0 ? appConfig : null
+}
+
 const loadThemeOptionsFromConfig = async () => {
   try {
-    const runtimeConfig = await fetchConfig(apiIndex.value)
+    const runtimeConfig = getInjectedRuntimeConfig() || await fetchConfig(apiIndex.value)
     frontendWsTimeoutMinutes.value = normalizeLiveSocketTimeoutMinutes(runtimeConfig?.frontend_ws_timeout_minutes)
     if (runtimeConfig && Object.prototype.hasOwnProperty.call(runtimeConfig, 'theme_options')) {
       applyMikusThemeOptions(runtimeConfig.theme_options)

@@ -1,20 +1,20 @@
 import { buildAuthCookie, buildClearAuthCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveThemeOptions, SITE_FIELDS, APPEARANCE_FIELDS } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, sendNotification } from '../services/notification.js';
 import { getNextServerHistoryPartitionId, HISTORY_MAX_PARTITION_ID } from '../database/indexOptimization.js';
-import { isValidTrafficCorrection, normalizeConnectionMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
+import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
 import { scheduleAgentConfigChanged, scheduleAgentReportModeChanged } from '../utils/agentConfigNotify.js';
 import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normalizeCurrency, normalizePrice, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
+import { THEME_PREVIEW_AUTH_TTL_SECONDS } from '../utils/config.js';
 
 const PING_NODE_FIELDS = ['custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
 const THEME_PREVIEW_AUTH_COOKIE = 'cfsm_theme_preview_auth';
-const THEME_PREVIEW_AUTH_TTL = 600;
 const DURABLE_OBJECTS_WEBSOCKET_MESSAGE_BILLING_RATIO = 20;
 
 function toUsageNumber(value) {
@@ -144,7 +144,7 @@ function buildThemePreviewUrl(request, themeUrl) {
 
 function buildThemePreviewAuthCookie(request, token) {
   const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
-  return `${THEME_PREVIEW_AUTH_COOKIE}=${encodeURIComponent(token)}; Max-Age=${THEME_PREVIEW_AUTH_TTL}; Path=/; HttpOnly; SameSite=Lax${secure}`;
+  return `${THEME_PREVIEW_AUTH_COOKIE}=${encodeURIComponent(token)}; Max-Age=${THEME_PREVIEW_AUTH_TTL_SECONDS}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 function buildClearThemePreviewAuthCookie(request) {
@@ -569,6 +569,24 @@ async function handleStartThemePreviewAction({ request, data }) {
   });
 }
 
+async function handleSaveThemeOptionsAction({ env, sys, data }) {
+  const themeOptions = data.theme_options ?? data.settings?.theme_options;
+  if (!isValidThemeOptions(themeOptions)) {
+    return createBadRequestResponse('invalidThemeOptionsFormat');
+  }
+
+  await saveThemeOptions(env.DB, themeOptions);
+  if (sys) {
+    sys.theme_options = themeOptions;
+  }
+
+  return createSuccessResponse({
+    success: true,
+    theme_options: themeOptions,
+    message: 'updateSuccess'
+  });
+}
+
 async function handleListAction({ env }) {
   const servers = await getAllServers(env.DB);
   const latestMetricsMap = await getLatestMetricsForAllServers(env.DB);
@@ -707,6 +725,7 @@ async function handleSendTestNotificationAction({ data }) {
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   get_settings: handleGetSettingsAction,
   start_theme_preview: handleStartThemePreviewAction,
+  save_theme_options: handleSaveThemeOptionsAction,
   list: handleListAction,
   d1_usage: handleD1UsageAction,
   send_test_notification: handleSendTestNotificationAction
@@ -808,8 +827,12 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
               appearanceOptions[field] = sanitizeCspDomains(value);
             } else if (field === 'display_mode') {
               appearanceOptions[field] = normalizeDisplayMode(value);
+            } else if (field === 'preferred_theme') {
+              appearanceOptions[field] = normalizePreferredTheme(value);
+            } else if (field === 'default_language') {
+              appearanceOptions[field] = normalizeDefaultLanguage(value);
             } else if (field === 'theme_options') {
-              if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+              if (!isValidThemeOptions(value)) {
                 return createBadRequestResponse('invalidThemeOptionsFormat');
               }
               appearanceOptions[field] = value;
@@ -964,7 +987,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
       }
@@ -974,7 +997,8 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         report_interval,
         wss_report_interval,
         reset_day,
-        connection_mode: effectiveConnectionMode
+        connection_mode: effectiveConnectionMode,
+        ping_mode
       });
       if (!agentConfigResult.valid) {
         return createBadRequestResponse(agentConfigResult.error);
@@ -1018,7 +1042,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -1039,6 +1063,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizedAgentConfig.report_interval,
           normalizedAgentConfig.wss_report_interval,
           normalizedAgentConfig.connection_mode,
+          normalizedAgentConfig.ping_mode,
           normalizeBooleanFlag(auto_update),
           pingNodes.values.custom_ct,
           pingNodes.values.custom_cu,
@@ -1160,10 +1185,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           await env.DB.prepare(`
             INSERT INTO servers (id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal,
               currency, expire_date,
-              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode,
+              traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
               auto_update, custom_ct, custom_cu, custom_cm, custom_bd, rx_correction, tx_correction,
               offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(
             server.id,
             server.name || '',
@@ -1184,6 +1209,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             server.report_interval ?? 60,
             normalizeWssReportInterval(server.wss_report_interval),
             normalizeConnectionMode(server.connection_mode) || 'auto',
+            normalizePingMode(server.ping_mode) || 'tcp',
             normalizeBooleanFlag(server.auto_update),
             server.custom_ct || '',
             server.custom_cu || '',

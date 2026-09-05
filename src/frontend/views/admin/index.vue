@@ -247,6 +247,7 @@
         :report-interval="reportInterval"
         :wss-report-interval="wssReportInterval"
         :connection-mode="connectionMode"
+        :ping-mode="pingMode"
         :custom-ct="customCt"
         :custom-cu="customCu"
         :custom-cm="customCm"
@@ -549,7 +550,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TerminalHeader from '../../components/TerminalHeader.vue'
 import Footer from '../../components/Footer.vue'
@@ -577,6 +578,8 @@ import { detectBillingCycle, detectCurrencySymbol, normalizeBillingCycle, normal
 const trans = useTranslation()
 const route = useRoute()
 const router = useRouter()
+const appConfig = inject('appConfig', {})
+let startupConfigConsumed = false
 const AGENT_RELEASE_URL = 'https://api.github.com/repos/huilang-me/cfsm-agent/releases/latest'
 const AGENT_RELEASE_FAILURE_TTL = 30 * 1000
 
@@ -786,6 +789,16 @@ const isNotificationWebhookEnabled = () => settings.value.notification_webhook_e
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
+const normalizePreferredThemeSetting = (value) => {
+  const theme = String(value || '').trim().toLowerCase()
+  return ['dark', 'light', 'auto'].includes(theme) ? theme : 'auto'
+}
+
+const normalizeDefaultLanguageSetting = (value) => {
+  const language = String(value || '').trim().toLowerCase()
+  return ['zh', 'en', 'auto'].includes(language) ? language : 'auto'
+}
+
 const formatThemeOptions = (value) => {
   const normalized = value === undefined || value === null ? {} : value
   try {
@@ -889,13 +902,15 @@ const settings = ref({
   custom_head: '',
   custom_script: '',
   display_mode: 'bar',
+  preferred_theme: 'auto',
+  default_language: 'auto',
   theme_options: '{}',
   is_public: false,
   show_price: true,
   show_expire: true,
   show_tf: true,
-  show_three_net_details: false,
-  wss_report_enabled: false,
+  show_three_net_details: true,
+  wss_report_enabled: true,
   wss_report_hours: Array.from({ length: 24 }, (_, hour) => hour),
   frontend_ws_timeout_minutes: 0,
   long_history_points: String(HISTORY.DEFAULT_LONG_RANGE_POINTS),
@@ -985,6 +1000,7 @@ const editForm = ref({
   report_interval: 60,
   wss_report_interval: 2,
   connection_mode: 'auto',
+  ping_mode: 'tcp',
   custom_ct: '',
   custom_cu: '',
   custom_cm: '',
@@ -1013,6 +1029,7 @@ const createBatchEditDefaults = () => ({
   report_interval: 60,
   wss_report_interval: 2,
   connection_mode: 'auto',
+  ping_mode: 'tcp',
   custom_ct: '',
   custom_cu: '',
   custom_cm: '',
@@ -1066,6 +1083,7 @@ const collectInterval = ref(0)
 const reportInterval = ref(60)
 const wssReportInterval = ref(2)
 const connectionMode = ref('auto')
+const pingMode = ref('tcp')
 const customCt = ref('')
 const customCu = ref('')
 const customCm = ref('')
@@ -1082,6 +1100,8 @@ const getEffectiveConnectionMode = (value) => {
   const connectionMode = value === 'http' ? 'http' : 'auto'
   return isWssReportEnabled.value ? connectionMode : 'http'
 }
+
+const getEffectivePingMode = (value) => value === 'icmp' ? 'icmp' : 'tcp'
 
 watch(isWssReportEnabled, (enabled) => {
   if (!enabled) {
@@ -1282,9 +1302,18 @@ const handleAdminApiIndexChange = async () => {
   await switchAdminSite()
 }
 
+const getStartupConfigForCurrentSite = () => {
+  if (startupConfigConsumed) return null
+  if (selectedApiIndex.value !== 0) return null
+  if (!appConfig || typeof appConfig !== 'object' || Object.keys(appConfig).length === 0) return null
+  startupConfigConsumed = true
+  return appConfig
+}
+
 const loadLatestAgentVersion = async () => {
   try {
-    const config = await fetchConfig(selectedApiIndex.value)
+    const startupConfig = getStartupConfigForCurrentSite()
+    const config = startupConfig || await fetchConfig(selectedApiIndex.value)
     const configVersion = normalizeVersion(config?.last_agent_version)
     latestAgentVersion.value = configVersion || await fetchLatestAgentReleaseVersion()
   } catch (e) {
@@ -1307,6 +1336,8 @@ const loadSettings = async () => {
         custom_head: settingsData.custom_head || '',
         custom_script: settingsData.custom_script || '',
         display_mode: resolveDisplayMode(settingsData),
+        preferred_theme: normalizePreferredThemeSetting(settingsData.preferred_theme),
+        default_language: normalizeDefaultLanguageSetting(settingsData.default_language),
         theme_options: formatThemeOptions(settingsData.theme_options),
         is_public: settingsData.is_public === 'true',
         show_price: settingsData.show_price === 'true',
@@ -1477,6 +1508,8 @@ const saveSettings = async () => {
       custom_head: settings.value.custom_head,
       custom_script: settings.value.custom_script,
       display_mode: normalizeDisplayMode(settings.value.display_mode),
+      preferred_theme: normalizePreferredThemeSetting(settings.value.preferred_theme),
+      default_language: normalizeDefaultLanguageSetting(settings.value.default_language),
       appearance_options: {
         theme_options: themeOptionsResult.value
       },
@@ -1633,6 +1666,7 @@ const copyCmd = (serverId) => {
   reportInterval.value = server?.report_interval || 60
   wssReportInterval.value = server?.wss_report_interval || 2
   connectionMode.value = getEffectiveConnectionMode(server?.connection_mode)
+  pingMode.value = getEffectivePingMode(server?.ping_mode)
   customCt.value = server?.custom_ct || settings.value.custom_ct
   customCu.value = server?.custom_cu || settings.value.custom_cu
   customCm.value = server?.custom_cm || settings.value.custom_cm
@@ -1660,6 +1694,7 @@ const getCustomInstallCommand = () => {
   const autoUpdateFlag = autoUpdate.value ? 1 : 0
   const proxy = installGhProxy.value.trim()
   const effectiveConnectionMode = getEffectiveConnectionMode(connectionMode.value)
+  const effectivePingMode = getEffectivePingMode(pingMode.value)
   if (targetOs.value === 'windows') {
     const params = [
       'install'
@@ -1672,6 +1707,7 @@ const getCustomInstallCommand = () => {
       `-collect_interval='${collectInterval.value}'`,
       `-interval='${reportInterval.value}'`,
       `-connection_mode='${effectiveConnectionMode}'`,
+      `-ping_mode='${effectivePingMode}'`,
       `-reset_day='${resetDay.value ?? 1}'`,
       `-auto_update='${autoUpdateFlag}'`
     )
@@ -1694,6 +1730,7 @@ const getCustomInstallCommand = () => {
     `-collect_interval=${collectInterval.value}`,
     `-interval=${reportInterval.value}`,
     `-connection_mode=${effectiveConnectionMode}`,
+    `-ping_mode=${effectivePingMode}`,
     `-reset_day=${resetDay.value ?? 1}`,
     `-auto_update=${autoUpdateFlag}`
   )
@@ -1768,6 +1805,7 @@ const createEditFormFromServer = (server) => ({
     report_interval: server.report_interval || 60,
     wss_report_interval: server.wss_report_interval || 2,
     connection_mode: getEffectiveConnectionMode(server.connection_mode),
+    ping_mode: server.ping_mode === 'icmp' ? 'icmp' : 'tcp',
     custom_ct: server.custom_ct || '',
     custom_cu: server.custom_cu || '',
     custom_cm: server.custom_cm || '',
@@ -1851,6 +1889,7 @@ const buildEditPayloadFromForm = (form) => {
       report_interval: form.report_interval,
       wss_report_interval: form.wss_report_interval,
       connection_mode: getEffectiveConnectionMode(form.connection_mode),
+      ping_mode: form.ping_mode === 'icmp' ? 'icmp' : 'tcp',
       custom_ct: pingNodeValidation.values.custom_ct,
       custom_cu: pingNodeValidation.values.custom_cu,
       custom_cm: pingNodeValidation.values.custom_cm,
@@ -1915,6 +1954,7 @@ const saveEdit = async () => {
     report_interval: editForm.value.report_interval,
     wss_report_interval: editForm.value.wss_report_interval,
     connection_mode: getEffectiveConnectionMode(editForm.value.connection_mode),
+    ping_mode: editForm.value.ping_mode === 'icmp' ? 'icmp' : 'tcp',
     custom_ct: pingNodeValidation.values.custom_ct,
     custom_cu: pingNodeValidation.values.custom_cu,
     custom_cm: pingNodeValidation.values.custom_cm,

@@ -39,10 +39,9 @@
       <div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.currency }}</label>
-          <input type="text" v-model="editForm.currency" class="form-input" list="currency-list" placeholder="e.g. $, ¥, €">
-          <datalist id="currency-list">
-            <option v-for="item in currencyOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
-          </datalist>
+          <select v-model="editForm.currency" class="form-select">
+            <option v-for="item in currencySelectOptions" :key="item.symbol" :value="item.symbol">{{ currencyLabel(item) }}</option>
+          </select>
         </div>
 
         <div class="form-group flex-1">
@@ -98,7 +97,7 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <div class="form-row mobile-two-row">
         <div class="form-group flex-1">
           <label class="form-label">
             {{ trans.collectInterval }}
@@ -139,7 +138,17 @@
         </div>
       </div>
 
-      <div class="form-row">
+      <div class="form-row mobile-two-row">
+        <div class="form-group flex-1">
+          <label class="form-label">
+            {{ trans.pingMode }}
+            <HelpTooltip :text="trans.pingModeIcmpRootHint" />
+          </label>
+          <select v-model="editForm.ping_mode" class="form-select">
+            <option value="tcp">TCP</option>
+            <option value="icmp">ICMP (root)</option>
+          </select>
+        </div>
         <div class="form-group flex-1">
           <label class="form-label">{{ trans.networkInterface }}</label>
           <input type="text" name="edit_interface" autocomplete="off" v-model.trim="editForm.interface" class="form-input" :placeholder="trans.networkInterfacePlaceholder">
@@ -251,6 +260,16 @@ const hasPingNodeErrors = computed(() => Object.values(pingNodeErrors.value).som
 
 const billingCycleOptions = BILLING_CYCLES
 const currencyOptions = CURRENCY_OPTIONS
+const currencySelectOptions = computed(() => {
+  const currentCurrency = String(editForm.value.currency || '').trim()
+  if (!currentCurrency || currencyOptions.some(item => item.symbol === currentCurrency)) {
+    return currencyOptions
+  }
+  return [
+    { symbol: currentCurrency, nameZh: currentCurrency, nameEn: currentCurrency },
+    ...currencyOptions
+  ]
+})
 
 const cycleLabel = (item) => currentLang.value === 'zh' ? item.labelZh : item.labelEn
 const currencyLabel = (item) => currentLang.value === 'zh'

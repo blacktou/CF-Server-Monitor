@@ -10,7 +10,7 @@ A lightweight multi-server monitoring dashboard built on Cloudflare Workers, D1,
   <a href="README-en.md">English</a>
 </p>
 
-[![Workers](https://img.shields.io/badge/Workers-2.8.4%20Beta8-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
+[![Workers](https://img.shields.io/badge/Workers-2.8.5%20Beta2-f38020?style=flat-square&logo=cloudflare&logoColor=white)](version.json)
 [![GitHub Stars](https://img.shields.io/github/stars/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/huilang-me/CF-Server-Monitor?style=flat-square&logo=github)](https://github.com/huilang-me/CF-Server-Monitor/forks)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](#license)
@@ -64,7 +64,7 @@ Compared with traditional controller-style monitoring tools, CF-Server-Monitor i
 | --- | --- |
 | Realtime monitoring | CPU, GPU, memory, swap, disk, disk IO, network, connections, process count, load average, uptime |
 | History | 7-day charts, long-range sampling, realtime network speed, monthly traffic and correction |
-| Network quality | Latency and packet loss tracking for CT, CU, CM, and BGP nodes; when three-net details are enabled, the dashboard samples up to 20 real points from the last hour of D1 history and caches them for 2 minutes |
+| Network quality | Latency and packet loss tracking for CT, CU, CM, and BGP nodes; when three-net details are enabled, the dashboard samples up to 20 real points from the last 2 hours of D1 history and caches them for 5 minutes |
 | Dashboard views | Bar chart, ring chart, table, and map views for desktop and mobile |
 | Admin panel | Server CRUD, drag sorting, hidden servers, import/export, batch delete, database maintenance |
 | Cross-platform Agent | Mainstream Linux, Alpine Linux, OpenWrt, Synology DSM, Feiniu fnOS, FreeBSD, macOS, Windows; Go Agent by default, Shell/PowerShell still available |
@@ -232,6 +232,7 @@ When moving from an old root installation to a non-root installation, uninstall 
 | Variable | Required | Description |
 | --- | --- | --- |
 | `API_SECRET` | Yes | Agent reporting secret and initial admin password |
+| `API_BASE` | No | Worker API base URLs for frontend requests, comma-separated; useful for multi-Worker aggregation or separated frontend/backend deployments |
 | `CORS_ALLOWED_ORIGINS` | No | Allowed API origins, comma-separated |
 
 ### GitHub Pages Static Frontend
@@ -256,7 +257,7 @@ npm run build:github-page
 
 | Category | Main options |
 | --- | --- |
-| Site | Title, background, favicon, default display mode, three-net details, public access |
+| Site | Title, background, favicon, default display mode, default appearance, default language, three-net details, public access |
 | Server | HTTP/WSS report intervals, collect interval, ping nodes, network interfaces, monthly traffic, price, expiration, auto-renew |
 | Security | Admin account, password, JWT Secret, Turnstile |
 | Notifications | Offline alerts, expiration reminders, resource alerts, test notification |

@@ -22,18 +22,6 @@
     initial-value: 0;
 }
 
-@property --ring-color {
-    syntax: '<color>';
-    inherits: true;
-    initial-value: #4da6ff;
-}
-
-@property --swap-ring-color {
-    syntax: '<color>';
-    inherits: true;
-    initial-value: #4da6ff;
-}
-
 :root {
     /* Background Colors */
     --bg-primary: #0a0e14;
@@ -685,18 +673,27 @@ body::before {
 /* --------------------------------------------------------------------------
    10. Filter & Tag Components
    -------------------------------------------------------------------------- */
-.filter-bar {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
+.filter-wrap {
+    position: relative;
     margin-bottom: 16px;
 }
 
-.filter-tag {
-    display: inline-flex;
+.filter-bar {
+    display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 12px;
+    flex-wrap: nowrap;
+    min-width: 0;
+}
+
+.filter-tag {
+    appearance: none;
+    -webkit-appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 2px 6px;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 4px;
@@ -705,6 +702,11 @@ body::before {
     cursor: pointer;
     transition: all 0.2s;
     font-family: var(--terminal-font);
+    font-size: 13px;
+    line-height: 1;
+    min-height: 28px;
+    white-space: nowrap;
+    flex: 0 0 auto;
 }
 
 .filter-tag:hover {
@@ -720,8 +722,14 @@ body::before {
 }
 
 .filter-tag img {
-    width: 16px;
+    width: 14px;
+    height: 10px;
+    object-fit: cover;
     border-radius: 1px;
+}
+
+.filter-tag-label {
+    min-width: 0;
 }
 
 .filter-tag-unknown {
@@ -730,8 +738,51 @@ body::before {
 }
 
 .filter-tag-icon {
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1;
+}
+
+.filter-more {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.filter-more-btn {
+    color: var(--accent-cyan);
+}
+
+.filter-more-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 50;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    width: min(304px, calc(100vw - 32px));
+    max-height: min(320px, 55vh);
+    overflow: auto;
+    padding: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-active);
+    border-radius: 4px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.filter-more-item {
+    width: 100%;
+}
+
+.filter-measure {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    gap: 6px;
+    height: 0;
+    overflow: hidden;
+    pointer-events: none;
+    visibility: hidden;
 }
 
 /* --------------------------------------------------------------------------
@@ -961,7 +1012,7 @@ body::before {
     height: 100%;
     background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
     border-radius: 999px;
-    transition: width 0.3s ease;
+    transition: width 0.18s ease;
 }
 
 .quota-label-with-help {
@@ -1243,11 +1294,8 @@ body::before {
     align-items: center;
     justify-content: center;
     --ring-thickness: 5px;
-    transition:
-        --ring-value 0.3s ease,
-        --ring-color 0.3s ease,
-        --swap-ring-value 0.3s ease,
-        --swap-ring-color 0.3s ease;
+    transition: --ring-value 0.18s ease, --swap-ring-value 0.18s ease;
+    contain: paint;
 }
 
 .metric-ring-track,
@@ -1267,7 +1315,6 @@ body::before {
     background: conic-gradient(from -90deg, var(--ring-color) 0 calc(var(--ring-value) * 1%), rgba(255, 255, 255, 0.03) 0 100%);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--ring-thickness)), #000 calc(100% - var(--ring-thickness) + 1px));
-    transition: background 0.3s ease;
 }
 
 .metric-ring-chart-memory {
@@ -1291,7 +1338,6 @@ body::before {
     background: conic-gradient(from -90deg, var(--swap-ring-color) 0 calc(var(--swap-ring-value) * 1%), rgba(255, 255, 255, 0.025) 0 100%);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
     mask: radial-gradient(farthest-side, transparent calc(100% - var(--swap-ring-thickness)), #000 calc(100% - var(--swap-ring-thickness) + 1px));
-    transition: background 0.3s ease;
 }
 
 .metric-ring-chart-memory.has-swap-ring .metric-ring-center {
@@ -1418,7 +1464,7 @@ body::before {
     height: 100%;
     border-radius: 999px;
     background: var(--accent-blue);
-    transition: width 0.3s ease, background 0.3s ease;
+    transition: width 0.18s ease;
 }
 
 /* Ping row — ring card */
@@ -1512,7 +1558,7 @@ body::before {
 .stat-bar-fill {
     height: 100%;
     border-radius: 2px;
-    transition: width 0.3s ease, background 0.3s ease;
+    transition: width 0.18s ease;
 }
 
 .stat-value {
@@ -1890,6 +1936,22 @@ body::before {
     gap: 12px;
 }
 
+/* Skip layout and paint work for cards outside the viewport. */
+.servers-grid > .server-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 420px;
+}
+
+/* A large live dashboard should settle updates without animating every item. */
+.view-panel.high-density .metric-ring-chart,
+.view-panel.high-density .metric-ring-progress,
+.view-panel.high-density .metric-ring-swap-progress,
+.view-panel.high-density .server-card-limit-fill,
+.view-panel.high-density .stat-bar-fill,
+.view-panel.high-density .quota-progress-fill {
+    transition: none;
+}
+
 .group-section {
     margin-bottom: 24px;
 }
@@ -2010,6 +2072,7 @@ body::before {
     position: relative;
     display: inline-flex;
     align-items: center;
+    gap: 8px;
     flex-shrink: 0;
 }
 
@@ -2040,6 +2103,10 @@ body::before {
 
 .toolbar-select::placeholder {
     color: var(--text-muted);
+}
+
+.toolbar-custom-input {
+    cursor: text;
 }
 
 .toolbar-select-clear {
@@ -4219,6 +4286,7 @@ body.mikus-theme .finance-modal-dialog,
 body.mikus-theme .quota-section,
 body.mikus-theme .table-container,
 body.mikus-theme .table-wrapper,
+body.mikus-theme .filter-more-menu,
 body.mikus-theme .modal-dialog,
 body.mikus-theme .login-container {
     border-color: var(--mikus-border);
@@ -4695,6 +4763,67 @@ body.mikus-theme .mikus-stats-mascot-img {
 @media (max-width: 768px) {
     .container {
         padding: 8px;
+    }
+
+    .nav-area {
+        padding: 12px;
+        margin-bottom: 14px;
+    }
+
+    .header-row {
+        align-items: stretch;
+        margin-bottom: 12px;
+    }
+
+    .site-title {
+        width: 100%;
+        font-size: 14px;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+    }
+
+    .controls-group,
+    .view-toggle {
+        width: 100%;
+    }
+
+    .view-toggle {
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .view-toggle::-webkit-scrollbar {
+        display: none;
+    }
+
+    .toggle-btn {
+        flex: 1 0 auto;
+        justify-content: center;
+        min-width: 68px;
+        padding: 7px 8px;
+        font-size: 11px;
+    }
+
+    .filter-wrap {
+        margin-bottom: 12px;
+    }
+
+    .filter-bar {
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .filter-tag {
+        min-height: 27px;
+        padding: 4px 7px;
+        font-size: 10px;
+    }
+
+    .filter-more-menu {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        width: min(292px, calc(100vw - 28px));
+        max-height: min(300px, 58vh);
     }
 
     .help-tooltip-panel {

@@ -1,11 +1,13 @@
-const CURRENT_VERSION = '2.8.4 Beta8';
-export const DEFAULT_SITE_TITLE = 'Cloudflare Server Monitor';
-export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'theme_options'];
+import {
+  DEFAULT_SITE_TITLE,
+  JWT_SECRET_MIN_LENGTH,
+  SITE_SETTINGS_CACHE_TTL_MS
+} from './config.js';
+
+export const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_bg_mobile', 'favicon', 'custom_head', 'custom_script', 'csp_static', 'csp_api', 'display_mode', 'preferred_theme', 'default_language', 'theme_options'];
 
 export const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_tf', 'show_three_net_details', 'wss_report_enabled', 'wss_report_hours', 'frontend_ws_timeout_minutes', 'long_history_points', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'notification_timezone', 'expire_notification_time', 'notification_webhook_enabled', 'notification_webhook_url', 'notification_webhook_method', 'notification_webhook_format', 'notification_webhook_headers', 'notification_webhook_body', 'notification_template', 'turnstile_enabled', 'turnstile_login_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'cloudflare_account_id', 'cloudflare_token', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'expire_reminder', 'resource_alert_rules', 'theme_url', 'history_id_optimized','servers_optimized'];
 
-const SITE_SETTINGS_TTL = 120 * 1000;
-const JWT_SECRET_MIN_LENGTH = 32;
 export const TG_NOTIFY_MINUTES_MIN = 2;
 export const TG_NOTIFY_MINUTES_MAX = 30;
 export const TG_NOTIFY_LEGACY_TRUE_MINUTES = 5;
@@ -65,13 +67,15 @@ const defaults = {
   csp_static: '',
   csp_api: '',
   display_mode: 'ring',
+  preferred_theme: 'auto',
+  default_language: 'auto',
   theme_options: {},
   is_public: 'true',
   show_price: 'true',
   show_expire: 'true',
   show_tf: 'true',
-  show_three_net_details: 'false',
-  wss_report_enabled: 'false',
+  show_three_net_details: 'true',
+  wss_report_enabled: 'true',
   wss_report_hours: [...ALL_WSS_REPORT_HOURS],
   frontend_ws_timeout_minutes: '0',
   long_history_points: String(DEFAULT_LONG_HISTORY_POINTS),
@@ -441,9 +445,24 @@ export function normalizeDisplayMode(value, fallback = 'bar') {
   return fallback === 'ring' || fallback === 'table' ? fallback : 'bar';
 }
 
+export function normalizePreferredTheme(value, fallback = 'auto') {
+  const theme = String(value || '').trim().toLowerCase();
+  if (theme === 'dark' || theme === 'light' || theme === 'auto') return theme;
+  return fallback === 'dark' || fallback === 'light' ? fallback : 'auto';
+}
+
+export function normalizeDefaultLanguage(value, fallback = 'auto') {
+  const language = String(value || '').trim().toLowerCase();
+  if (language === 'zh' || language === 'en' || language === 'auto') return language;
+  return fallback === 'zh' || fallback === 'en' ? fallback : 'auto';
+}
+
 export function normalizeBooleanSetting(value, fallback = 'false') {
   if (value === true || value === 1) return 'true';
-  if (value === false || value === 0 || value === null || value === undefined || value === '') return 'false';
+  if (value === false || value === 0) return 'false';
+  if (value === null || value === undefined || value === '') {
+    return fallback === 'true' ? 'true' : 'false';
+  }
 
   const normalized = String(value).trim().toLowerCase();
   if (['true', '1', 'yes', 'on'].includes(normalized)) return 'true';
@@ -616,8 +635,8 @@ export async function loadSiteSettings(db, options = {}) {
     result.expire_reminder = normalizeExpireReminder(result.expire_reminder);
     result.long_history_points = normalizeLongHistoryPoints(result.long_history_points);
     result.resource_alert_rules = normalizeResourceAlertRules(result.resource_alert_rules);
-    result.show_three_net_details = normalizeBooleanSetting(result.show_three_net_details);
-    result.wss_report_enabled = normalizeBooleanSetting(result.wss_report_enabled);
+    result.show_three_net_details = normalizeBooleanSetting(result.show_three_net_details, defaults.show_three_net_details);
+    result.wss_report_enabled = normalizeBooleanSetting(result.wss_report_enabled, defaults.wss_report_enabled);
     result.wss_report_hours = normalizeWssReportHours(result.wss_report_hours);
     result.frontend_ws_timeout_minutes = normalizeFrontendWsTimeoutMinutes(result.frontend_ws_timeout_minutes);
     result.notification_webhook_enabled = normalizeBooleanSetting(result.notification_webhook_enabled);
@@ -633,7 +652,7 @@ export async function loadSiteSettings(db, options = {}) {
   }
 
   cachedSiteSettings = result;
-  siteSettingsCacheExpiry = now + SITE_SETTINGS_TTL;
+  siteSettingsCacheExpiry = now + SITE_SETTINGS_CACHE_TTL_MS;
   return result;
 }
 
@@ -671,18 +690,47 @@ export async function loadAppearanceOptions(db) {
       copyFields(result, legacy, APPEARANCE_FIELDS);
     }
     copyFields(result, appearanceOptions, APPEARANCE_FIELDS);
+    result.display_mode = normalizeDisplayMode(result.display_mode, defaults.display_mode);
+    result.preferred_theme = normalizePreferredTheme(result.preferred_theme);
+    result.default_language = normalizeDefaultLanguage(result.default_language);
   } catch (e) {
     console.error('加载外观设置失败:', e);
   }
 
   cachedAppearanceOptions = result;
-  appearanceOptionsCacheExpiry = now + SITE_SETTINGS_TTL;
+  appearanceOptionsCacheExpiry = now + SITE_SETTINGS_CACHE_TTL_MS;
   return result;
 }
 
 export function clearAppearanceSettingsCache() {
   cachedAppearanceOptions = null;
   appearanceOptionsCacheExpiry = 0;
+}
+
+export function isValidThemeOptions(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export async function saveThemeOptions(db, themeOptions) {
+  await db.prepare(
+    `INSERT INTO settings (key, value)
+     VALUES ('appearance_options', json_object('theme_options', json(?)))
+     ON CONFLICT(key) DO UPDATE SET value = CASE
+       WHEN json_valid(value) THEN CASE
+         WHEN json_type(value) = 'object' THEN json_set(value, '$.theme_options', json(?))
+         ELSE json_object('theme_options', json(?))
+       END
+       ELSE json_object('theme_options', json(?))
+     END`
+  ).bind(
+    JSON.stringify(themeOptions),
+    JSON.stringify(themeOptions),
+    JSON.stringify(themeOptions),
+    JSON.stringify(themeOptions)
+  ).run();
+
+  clearAppearanceSettingsCache();
+  return themeOptions;
 }
 
 export async function loadSettings(db) {
@@ -712,8 +760,8 @@ export async function saveSiteOptions(db, updates) {
   siteOptions.expire_reminder = normalizeExpireReminder(siteOptions.expire_reminder);
   siteOptions.long_history_points = normalizeLongHistoryPoints(siteOptions.long_history_points);
   siteOptions.resource_alert_rules = normalizeResourceAlertRules(siteOptions.resource_alert_rules);
-  siteOptions.show_three_net_details = normalizeBooleanSetting(siteOptions.show_three_net_details);
-  siteOptions.wss_report_enabled = normalizeBooleanSetting(siteOptions.wss_report_enabled);
+  siteOptions.show_three_net_details = normalizeBooleanSetting(siteOptions.show_three_net_details, defaults.show_three_net_details);
+  siteOptions.wss_report_enabled = normalizeBooleanSetting(siteOptions.wss_report_enabled, defaults.wss_report_enabled);
   siteOptions.wss_report_hours = normalizeWssReportHours(siteOptions.wss_report_hours);
   siteOptions.frontend_ws_timeout_minutes = normalizeFrontendWsTimeoutMinutes(siteOptions.frontend_ws_timeout_minutes);
   siteOptions.notification_webhook_enabled = normalizeBooleanSetting(siteOptions.notification_webhook_enabled);
@@ -754,8 +802,4 @@ export function debug(...args) {
   if (isDebugEnabled) {
     console.debug('[DEBUG]', ...args);
   }
-}
-
-export function getCurrentVersion() {
-  return CURRENT_VERSION;
 }
